@@ -1,0 +1,180 @@
+---
+title: Descriptive analysis of the dataset of home sales in the city of Ames, Iowa for BAN 502 Project Phase 1.
+author: "Prafull Pandey"
+date: "`r Sys.Date()`"
+output: word_document
+---
+# Exploratory/descriptive analysis of of home sales in the city of Ames, Iowa. The response variable in the dataset is “Above_Median”
+
+```{r Sourcing Libraries}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(gridExtra) #used for a little fancy arranging of plots
+library(car) #for the VIF function
+library(glmnet)
+library(skimr)
+library(ggcorrplot) #create an alternative to ggcorr plots
+library(MASS) #access to forward and backward selection algorithms
+library(leaps) #best subset selection
+library(lmtest) #for the dw test
+library(splines) #for nonlinear fitting
+library(car) #for calculating the variance inflation factor
+```
+
+## Read-in data. For this work we are using the dataset of home sales in the city of Ames, Iowa.
+
+```{r}
+ames=read_csv("ames_student-1.csv")
+```
+
+
+## Examined the ames data frame
+```{r}
+str(ames)
+#glimpse(ames)
+skim(ames)
+```
+
+## Examin summary of dataset and Perform mutation of response variable into numeric for quantitative variables corelation analysis and translate all character variables into factors.
+```{r Data range selection to limit observations, mutate and translate all characters into factors}
+summary(ames)
+ames2= ames %>%
+  mutate(Above_Median_Numeric = ifelse(Above_Median == "Yes", 1, 0)) # to estimate correlation with quantitative or continuous variables.
+#ames2 = ames2 %>% filter(ames$Year_Built >= 1965) # Decided to consume full data
+
+ames2 = ames2 %>% mutate_if(is.character, as_factor)  # translate all character variables to factor variables.
+
+```
+
+## Examin dataset after translation and mutation.
+
+
+```{r Examin ames2 dataset}
+summary(ames2)
+skim(ames2)
+```
+
+## Visualize relationsship of all variables with response variable Above_Median to identify required variables for future model with expected positive relationship
+```{r}
+ggpairs(ames2, columns = c("MS_SubClass", "MS_Zoning", "Lot_Frontage", "Lot_Area","Above_Median"),cardinality_threshold = 50)
+ggpairs(ames2, columns = c("Street", "Alley", "Lot_Shape", "Land_Contour","Above_Median"))
+ggpairs(ames2, columns = c("Utilities", "Lot_Config", "Land_Slope", "Neighborhood","Above_Median"),cardinality_threshold = 50)
+ggpairs(ames2, columns = c("Condition_1", "Condition_2", "Bldg_Type", "House_Style","Above_Median"))
+ggpairs(ames2, columns = c("Overall_Qual", "Overall_Cond", "Year_Built", "Year_Remod_Add","Above_Median"))
+ggpairs(ames2, columns = c("Roof_Style", "Roof_Matl", "Exterior_1st", "Exterior_2nd","Above_Median"),cardinality_threshold = 50)
+ggpairs(ames2, columns = c("Mas_Vnr_Type", "Mas_Vnr_Area", "Exter_Qual", "Exter_Cond","Above_Median"))
+ggpairs(ames2, columns = c("Foundation", "Bsmt_Qual", "Bsmt_Cond", "Bsmt_Exposure","Above_Median"))
+ggpairs(ames2, columns = c("BsmtFin_Type_1", "BsmtFin_SF_1", "BsmtFin_Type_2", "BsmtFin_SF_2","Above_Median"))
+ggpairs(ames2, columns = c("Bsmt_Unf_SF", "Total_Bsmt_SF", "Heating", "Heating_QC","Above_Median"))
+ggpairs(ames2, columns = c("Central_Air", "Electrical", "First_Flr_SF", "Second_Flr_SF","Above_Median"))
+ggpairs(ames2, columns = c("Low_Qual_Fin_SF", "Gr_Liv_Area", "Bsmt_Full_Bath", "Bsmt_Half_Bath","Above_Median"))
+ggpairs(ames2, columns = c("Full_Bath", "Half_Bath", "Bedroom_AbvGr", "Kitchen_AbvGr","Above_Median"))
+ggpairs(ames2, columns = c("Kitchen_Qual", "TotRms_AbvGrd", "Functional", "Fireplaces","Above_Median"))
+ggpairs(ames2, columns = c("Fireplace_Qu", "Garage_Type", "Garage_Finish", "Garage_Cars","Above_Median"))
+ggpairs(ames2, columns = c("Garage_Area", "Garage_Qual", "Garage_Cond", "Paved_Drive","Above_Median"))
+ggpairs(ames2, columns = c("Wood_Deck_SF", "Open_Porch_SF", "Enclosed_Porch", "Three_season_porch","Above_Median"),cardinality_threshold = 251)
+ggpairs(ames2, columns = c("Screen_Porch", "Pool_Area", "Pool_QC", "Fence","Above_Median"),cardinality_threshold = 251)
+ggpairs(ames2, columns = c("Misc_Feature", "Misc_Val", "Mo_Sold", "Year_Sold","Above_Median"))
+ggpairs(ames2, columns = c("Sale_Type", "Sale_Condition", "Longitude", "Latitude","Above_Median"))
+
+
+```
+### Analyze all variables and segrigating in two differfent groups to examin them as factor or quantitative variables.
+```{r Segrigating and analyzing}
+
+ames3= ames2[, sapply(ames2, is.factor)]
+ames4= ames2[, !sapply(ames2, is.factor)]
+
+```
+### Analyze contineous quantitative variables with closer look on data patterns
+
+```{r}
+#colnames(ames4)
+glimpse((ames4))
+skim(ames4)
+```
+
+
+## We look at correlation for continuous quantitative variables. 
+```{r}
+ames2 %>% select_if(is.numeric) %>% dplyr::select("Lot_Frontage","Lot_Area", "Year_Built","Year_Remod_Add","Mas_Vnr_Area","BsmtFin_SF_1","BsmtFin_SF_2","Bsmt_Unf_SF","Above_Median_Numeric") %>% cor() %>%
+ggcorrplot(hc.order = TRUE, type = "lower",    lab = TRUE)
+
+ames2 %>% select_if(is.numeric) %>% dplyr::select("Total_Bsmt_SF","First_Flr_SF","Second_Flr_SF","Low_Qual_Fin_SF","Gr_Liv_Area","Bsmt_Full_Bath","Bsmt_Half_Bath","Full_Bath","Above_Median_Numeric") %>% cor() %>%
+ggcorrplot(hc.order = TRUE, type = "lower",lab = TRUE)
+
+
+ames2 %>% select_if(is.numeric) %>% dplyr::select("Half_Bath","Bedroom_AbvGr","Kitchen_AbvGr","TotRms_AbvGrd","Fireplaces","Garage_Cars","Garage_Area","Wood_Deck_SF","Above_Median_Numeric") %>% cor() %>%
+ggcorrplot(hc.order = TRUE, type = "lower",lab = TRUE)
+
+ames2 %>% select_if(is.numeric) %>% dplyr::select("Open_Porch_SF","Enclosed_Porch","Three_season_porch","Screen_Porch","Pool_Area","Misc_Val","Mo_Sold","Year_Sold","Above_Median_Numeric") %>% cor() %>%
+ggcorrplot(hc.order = TRUE, type = "lower",lab = TRUE)
+
+ames2 %>% select_if(is.numeric) %>% dplyr::select("Longitude","Latitude","Above_Median_Numeric") %>% cor() %>%
+ggcorrplot(hc.order = TRUE, type = "lower",lab = TRUE)
+ 
+```
+
+### Analyze nominal variables with closer look on data patterns
+
+```{r}
+#colnames(ames3)
+glimpse((ames3))
+#labels(ames3)
+skim(ames3)
+```
+
+
+
+## Identifying variables for final dataset
+```{r Prepare final dataset}
+homes_data=ames2 %>% dplyr::select("Above_Median", "Lot_Config","Overall_Qual","Neighborhood","Bldg_Type", "House_Style","Exterior_2nd","Bsmt_Exposure","BsmtFin_Type_1", "Heating_QC","Garage_Finish","Garage_Qual", "Year_Built", "Year_Remod_Add","Gr_Liv_Area" ,"Fireplaces","Garage_Cars","Garage_Area")
+skim(homes_data)
+glimpse(homes_data)
+str(homes_data)
+```
+
+## Examin Corelation of nominal variables using focused plots since we had identified them during correlation plots in begining 
+```{r Data visalization for Nominal group 1}
+
+p1 = ggplot(homes_data, aes(x = Lot_Config, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p2 = ggplot(homes_data, aes(x = Overall_Qual, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p3 = ggplot(homes_data, aes(x = Bldg_Type, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p4 = ggplot(homes_data, aes(x = House_Style, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p5 = ggplot(homes_data, aes(x = Exterior_2nd, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p6 = ggplot(homes_data, aes(x = Bsmt_Exposure, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p7 = ggplot(homes_data, aes(x = BsmtFin_Type_1, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p8 = ggplot(homes_data, aes(x = Heating_QC, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p9 = ggplot(homes_data, aes(x = Garage_Finish, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+p10 = ggplot(homes_data, aes(x = Garage_Qual, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 90, size = 8, vjust = 0.5, hjust=1))
+
+grid.arrange(p1,p2,p3,p4, ncol = 2, heights=c(4,4))
+grid.arrange(p5,p6,p6,p8, ncol = 2, heights=c(4,4))
+grid.arrange(p9,p10, ncol = 2, heights=c(4,4))
+
+```
+
+```{r Data visalization for Nominal group 2}
+ggplot(homes_data, aes(x = Neighborhood, fill = Above_Median)) + geom_bar(position = "fill") + theme(axis.text.x = element_text(angle = 60, size = 9, vjust = 0.6, hjust=0.6))
+```
+
+
+
+
+### Examing datapoint of Continuous variables in relation with response variable : Year_Built, Year_Remod_Add, Mas_Vnr_Area, First_Flr_SF, Fireplaces, Garage_Cars, Garage_Area	
+
+```{r Data visalization for Continuous group 2}
+
+p11 = ggplot(homes_data,aes(x=Above_Median,y=Year_Built)) + geom_boxplot() + geom_jitter(alpha = 0.15) + theme_bw() 
+p12 = ggplot(homes_data,aes(x=Above_Median,y=Year_Remod_Add)) + geom_boxplot() + geom_jitter(alpha = 0.15) + theme_bw() 
+p13 = ggplot(homes_data,aes(x=Above_Median,y=Gr_Liv_Area)) + geom_boxplot() + geom_jitter(alpha = 0.15) + theme_bw()
+p14 = ggplot(homes_data,aes(x=Above_Median,y=Fireplaces)) + geom_boxplot() + geom_jitter(alpha = 0.15) + theme_bw() 
+p15 = ggplot(homes_data,aes(x=Above_Median,y=Garage_Cars)) + geom_boxplot() + geom_jitter(alpha = 0.15) + theme_bw()
+p16 = ggplot(homes_data,aes(x=Above_Median,y=Garage_Area)) + geom_boxplot() + geom_jitter(alpha = 0.15) + theme_bw() 
+
+grid.arrange(p11,p12,p13,p14, ncol = 2)
+grid.arrange(p15, p16, ncol = 2)
+
+```
+

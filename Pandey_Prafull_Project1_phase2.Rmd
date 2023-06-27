@@ -1,0 +1,358 @@
+---
+title: BAN 502 Project Phase#2
+author: "Prafull Pandey"
+date: "`r Sys.Date()`"
+output: word_document
+---
+# Continuation of code from Phase#1.
+## Sourcing Libraries
+```{r Sourcing Libraries}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(gridExtra) #used for a little fancy arranging of plots
+library(car) #for the VIF function
+library(glmnet)
+library(skimr)
+library(ggcorrplot) #create an alternative to ggcorr plots
+library(MASS) #access to forward and backward selection algorithms
+library(leaps) #best subset selection
+library(lmtest) #for the dw test
+library(splines) #for nonlinear fitting
+library(mice) 
+library(VIM) 
+library(naniar)
+library(UpSetR) 
+library(rpart) 
+library(RColorBrewer) 
+library(rattle)
+library(caret) 
+library(ranger)
+library(vip)
+library(randomForest)
+library(e1071)
+library(ROCR)
+
+```
+
+## Read-in data
+```{r Read-in data}
+ames=read_csv("ames_student-1.csv")
+```
+## Changed variables selection based on comments received from Dr. Hill during Phase#1 analysis.
+## Data preparation
+```{r Data preparation}
+str(ames) 
+summary(ames) 
+glimpse(ames)
+skim(ames)
+
+ames = ames %>% mutate_if(is.character, as_factor) 
+
+
+
+ames_selected = ames %>% dplyr::select("Overall_Qual","Neighborhood","BsmtFin_Type_1","Heating_QC","Garage_Finish","Year_Built","Year_Remod_Add","Gr_Liv_Area","Full_Bath","TotRms_AbvGrd","Fireplaces","Garage_Cars","Garage_Area","Above_Median"
+)
+
+```
+
+
+## Split data 
+
+```{r Split data}
+skim(ames_selected)
+set.seed(123)
+data_split = initial_split(ames_selected, prop = 0.70, strata = Above_Median)
+train = training(data_split)
+test = testing(data_split)
+
+
+```
+
+
+
+
+# Logistic Regression Model
+```{r Logistic regression model Train}
+
+log_ames_model = 
+  logistic_reg(mode = "classification") %>%  
+  set_engine("glm") 
+
+log_ames_recipe = recipe(Above_Median ~ ., train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+logreg_ames_wf = workflow() %>%
+  add_recipe(log_ames_recipe) %>% 
+  add_model(log_ames_model)
+
+log_ames_fit = fit(logreg_ames_wf, train)
+
+summary(log_ames_fit$fit$fit$fit)
+
+```
+## Logistic regression model train prediction and accuracy
+```{r Logistic regression model train prediction and accuracy}
+
+predictions = predict(log_ames_fit, train, type="prob") 
+head(predictions)
+
+predictions = predict(log_ames_fit, train, type="prob")[1]  
+head(predictions)
+
+ROCRpred = prediction(predictions, train$Above_Median) 
+
+
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+
+
+as.numeric(performance(ROCRpred, "auc")@y.values)
+
+
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+
+print(opt.cut(ROCRperf, ROCRpred))
+
+```
+## Check thresholds to evaluate accuracy for train
+```{r Check thresholds to evaluate accuracy for train }
+
+t1 = table(train$Above_Median,predictions > 0.4860099)
+t1
+
+(t1[1,2]+t1[2,1])/nrow(train) # Calculate accuracy for train dataset
+
+```
+## Logistic regression model test prodiction and accuracy
+```{r Logistic regression model test prodiction and accuracy}
+
+predictions = predict(log_ames_fit, test, type="prob") 
+head(predictions)
+
+predictions = predict(log_ames_fit, test, type="prob")[1]  
+head(predictions)
+
+ROCRpred = prediction(predictions, test$Above_Median) 
+
+
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+
+
+as.numeric(performance(ROCRpred, "auc")@y.values)
+
+
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+
+print(opt.cut(ROCRperf, ROCRpred))
+```
+## Check thresholds to evaluate accuracy for test
+```{r Check thresholds to evaluate accuracy for test}
+
+t1 = table(test$Above_Median,predictions > 0.4203653)
+t1
+(t1[1,2]+t1[2,1])/nrow(test) # Accuracy for test dataset
+
+
+
+
+```
+
+
+# Classification Tree Model
+```{r Classification Tree Model}
+
+ ames_folds = vfold_cv(train, v = 5)
+
+ames_tree_recipe = recipe(Above_Median ~., train) %>%
+  step_dummy(all_nominal(),-all_outcomes())
+
+ames_tree_model = decision_tree(cost_complexity = tune()) %>% 
+  set_engine("rpart", model = TRUE) %>%
+  set_mode("classification")
+
+ames_tree_grid = grid_regular(cost_complexity(),
+                          levels = 25) 
+
+ames_tree_wflow = 
+  workflow() %>% 
+  add_model(ames_tree_model) %>% 
+  add_recipe(ames_tree_recipe)
+
+ames_tree_res = 
+  ames_tree_wflow %>% 
+  tune_grid(
+    resamples = ames_folds,
+    grid = ames_tree_grid
+    )
+
+ames_tree_res
+
+ames_tree_res %>%
+  collect_metrics() %>%
+  ggplot(aes(cost_complexity, mean)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) 
+
+best_tree = ames_tree_res %>%
+  select_best("accuracy")
+
+best_tree
+
+
+final_wf = 
+  ames_tree_wflow %>% 
+  finalize_workflow(best_tree)
+
+final_fit = fit(final_wf, train)
+
+tree = final_fit %>% 
+  pull_workflow_fit() %>% 
+  pluck("fit")
+
+fancyRpartPlot(tree, tweak = 1.5) 
+
+final_fit$fit$fit$fit$cptable
+
+
+```
+
+## Classification Tree Model for train 
+```{r Classification Tree Model for train}
+
+# Predicting training dataset
+
+treepred_train = predict(final_fit, train, type = "class")
+head(treepred_train)
+
+confusionMatrix(treepred_train$.pred_class,train$Above_Median,positive="Yes")
+```
+## Classification Tree Model for test 
+```{r Classification Tree Model for test}
+
+#predicting testing dataset
+
+treepred_test = predict(final_fit, test, type = "class")
+head(treepred_test)
+
+confusionMatrix(treepred_test$.pred_class,test$Above_Median,positive="Yes") 
+
+
+```
+
+# Random Forest Model
+```{r Random Forest}
+
+set.seed(123)
+rf_folds = vfold_cv(train, v = 5)
+
+ames_rf_recipe = recipe(Above_Median ~., train) %>%
+  step_dummy(all_nominal(), -all_outcomes())
+
+ames_rf_model = rand_forest(mtry = tune(), min_n = tune(), trees = 100) %>% 
+  set_engine("ranger", importance = "permutation") %>% 
+  set_mode("classification")
+
+ames_rf_wflow = 
+  workflow() %>% 
+  add_model(ames_rf_model) %>% 
+  add_recipe(ames_rf_recipe)
+
+
+rf_grid = grid_regular(
+  mtry(range = c(3, 10)), 
+  min_n(range = c(20, 70)), 
+  levels = 5
+)
+
+ames_rf_res = tune_grid(
+  ames_rf_wflow,
+  resamples = rf_folds,
+  grid = rf_grid 
+)
+```
+
+
+
+## Random Forest min_n and mtry checks
+```{r Random Forest min_n and mtry checks}
+ames_rf_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  dplyr::select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+    values_to = "value",
+    names_to = "parameter"
+  ) %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~parameter, scales = "free_x") +
+  labs(x = NULL, y = "Accuracy")
+```
+
+## Random Forest Alternative view
+```{r Random Forest Alternative view}
+#Alternative view
+ames_rf_res %>%
+  collect_metrics() %>%
+  filter(.metric == "accuracy") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point() +
+  labs(y = "Accuracy")
+
+ames_best_rf = select_best(ames_rf_res, "accuracy")
+
+ames_final_rf = finalize_workflow(
+  ames_rf_wflow,
+  ames_best_rf
+)
+
+ames_final_rf
+
+ames_final_rf_fit = fit(ames_final_rf, train)
+
+ames_final_rf_fit %>% pull_workflow_fit() %>% vip(geom = "point")
+
+```
+
+## Random Forest train check
+```{r Random Forest train check}
+## predicting training dataset
+
+trainpredrf = predict(ames_final_rf_fit, train)
+head(trainpredrf)
+
+confusionMatrix(trainpredrf$.pred_class, train$Above_Median, 
+                positive = "Yes")
+```
+
+## Random Forest test check
+```{r Random Forest test check}
+## Predicting testing dataset
+
+testpredrf = predict(ames_final_rf_fit, test)
+head(testpredrf)
+
+confusionMatrix(testpredrf$.pred_class, test$Above_Median, 
+                positive = "Yes")
+
+```
+
